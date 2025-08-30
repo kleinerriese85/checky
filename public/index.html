@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checky - Mein Sprachassistent</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        .container {
+            text-align: center;
+            padding: 2rem;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .logo {
+            font-size: 4rem;
+            margin-bottom: 2rem;
+            animation: bounce 2s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-10px); }
+            60% { transform: translateY(-5px); }
+        }
+
+        .talk-button {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            color: white;
+            font-size: 3rem;
+            cursor: pointer;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 2rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .talk-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+        }
+
+        .talk-button:active {
+            transform: scale(0.95);
+        }
+
+        .talk-button.recording {
+            background: linear-gradient(45deg, #ff4757, #c44569);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 71, 87, 0.7); }
+            70% { box-shadow: 0 0 0 30px rgba(255, 71, 87, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 71, 87, 0); }
+        }
+
+        .status-indicator {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            margin: 0 auto 1rem;
+            background: #ddd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            transition: all 0.3s ease;
+        }
+
+        .status-indicator.connected {
+            background: #2ed573;
+        }
+
+        .status-indicator.speaking {
+            background: #ffa502;
+            animation: speakingPulse 0.5s infinite alternate;
+        }
+
+        .status-indicator.listening {
+            background: #3742fa;
+            animation: listeningPulse 1s infinite alternate;
+        }
+
+        @keyframes speakingPulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.2); }
+        }
+
+        @keyframes listeningPulse {
+            from { opacity: 0.7; }
+            to { opacity: 1; }
+        }
+
+        .parent-link {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            transition: background 0.3s ease;
+        }
+
+        .parent-link:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .error-message {
+            background: rgba(255,255,255,0.9);
+            color: #e74c3c;
+            padding: 1rem;
+            border-radius: 10px;
+            margin-top: 1rem;
+            display: none;
+        }
+
+        .instructions {
+            color: rgba(255,255,255,0.8);
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (max-width: 480px) {
+            .talk-button {
+                width: 150px;
+                height: 150px;
+                font-size: 2rem;
+            }
+            
+            .logo {
+                font-size: 3rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a href="parent.html" class="parent-link">👨‍👩‍👧‍👦 Eltern</a>
+    
+    <div class="container">
+        <div class="logo">🤖</div>
+        
+        <div class="status-indicator" id="statusIndicator">
+            ⚪
+        </div>
+        
+        <div class="instructions">
+            Halte den Knopf gedrückt und sprich mit mir!
+        </div>
+        
+        <button class="talk-button" id="talkButton">
+            🎤
+        </button>
+        
+        <div class="error-message" id="errorMessage"></div>
+    </div>
+
+    <script>
+        class CheckyClient {
+            constructor() {
+                this.socket = null;
+                this.isRecording = false;
+                this.mediaRecorder = null;
+                this.audioStream = null;
+                this.audioContext = null;
+                this.isConnected = false;
+                
+                this.talkButton = document.getElementById('talkButton');
+                this.statusIndicator = document.getElementById('statusIndicator');
+                this.errorMessage = document.getElementById('errorMessage');
+                
+                this.init();
+            }
+            
+            async init() {
+                try {
+                    await this.setupAudio();
+                    this.setupEventListeners();
+                    this.connect();
+                } catch (error) {
+                    this.showError('Fehler beim Laden. Bitte lade die Seite neu.');
+                    console.error('Initialization error:', error);
+                }
+            }
+            
+            async setupAudio() {
+                try {
+                    this.audioStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
+                    
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    
+                    this.mediaRecorder = new MediaRecorder(this.audioStream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
+                    
+                    this.mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0 && this.socket && this.socket.readyState === WebSocket.OPEN) {
+                            this.socket.send(event.data);
+                        }
+                    };
+                    
+                } catch (error) {
+                    throw new Error('Mikrofon konnte nicht aktiviert werden');
+                }
+            }
+            
+            setupEventListeners() {
+                // Mouse events for desktop
+                this.talkButton.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    this.startRecording();
+                });
+                
+                this.talkButton.addEventListener('mouseup', (e) => {
+                    e.preventDefault();
+                    this.stopRecording();
+                });
+                
+                this.talkButton.addEventListener('mouseleave', (e) => {
+                    e.preventDefault();
+                    this.stopRecording();
+                });
+                
+                // Touch events for mobile
+                this.talkButton.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.startRecording();
+                });
+                
+                this.talkButton.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    this.stopRecording();
+                });
+                
+                this.talkButton.addEventListener('touchcancel', (e) => {
+                    e.preventDefault();
+                    this.stopRecording();
+                });
+                
+                // Prevent context menu
+                this.talkButton.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                });
+            }
+            
+            connect() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/chat`;
+                
+                this.socket = new WebSocket(wsUrl);
+                
+                this.socket.onopen = () => {
+                    this.isConnected = true;
+                    this.updateStatus('connected');
+                    this.hideError();
+                };
+                
+                this.socket.onmessage = (event) => {
+                    if (event.data instanceof Blob) {
+                        // Audio data - play it
+                        this.playAudio(event.data);
+                    } else {
+                        // Text message
+                        try {
+                            const message = JSON.parse(event.data);
+                            if (message.error) {
+                                this.showError(message.error);
+                            }
+                        } catch (e) {
+                            // Ignore non-JSON messages
+                        }
+                    }
+                };
+                
+                this.socket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.showError('Verbindungsfehler. Bitte versuche es erneut.');
+                };
+                
+                this.socket.onclose = () => {
+                    this.isConnected = false;
+                    this.updateStatus('disconnected');
+                    
+                    // Attempt to reconnect after 3 seconds
+                    setTimeout(() => {
+                        if (!this.isConnected) {
+                            this.connect();
+                        }
+                    }, 3000);
+                };
+            }
+            
+            startRecording() {
+                if (!this.isConnected || this.isRecording) return;
+                
+                try {
+                    this.isRecording = true;
+                    this.talkButton.classList.add('recording');
+                    this.updateStatus('listening');
+                    
+                    this.mediaRecorder.start(100); // Send data every 100ms
+                } catch (error) {
+                    console.error('Error starting recording:', error);
+                    this.stopRecording();
+                }
+            }
+            
+            stopRecording() {
+                if (!this.isRecording) return;
+                
+                try {
+                    this.isRecording = false;
+                    this.talkButton.classList.remove('recording');
+                    this.updateStatus('connected');
+                    
+                    this.mediaRecorder.stop();
+                } catch (error) {
+                    console.error('Error stopping recording:', error);
+                }
+            }
+            
+            async playAudio(audioBlob) {
+                try {
+                    this.updateStatus('speaking');
+                    
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+                    const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+                    
+                    const source = this.audioContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(this.audioContext.destination);
+                    
+                    source.onended = () => {
+                        this.updateStatus('connected');
+                    };
+                    
+                    source.start();
+                } catch (error) {
+                    console.error('Error playing audio:', error);
+                    this.updateStatus('connected');
+                }
+            }
+            
+            updateStatus(status) {
+                const indicator = this.statusIndicator;
+                indicator.className = 'status-indicator';
+                
+                switch (status) {
+                    case 'connected':
+                        indicator.classList.add('connected');
+                        indicator.textContent = '🟢';
+                        break;
+                    case 'listening':
+                        indicator.classList.add('listening');
+                        indicator.textContent = '🔵';
+                        break;
+                    case 'speaking':
+                        indicator.classList.add('speaking');
+                        indicator.textContent = '🟡';
+                        break;
+                    default:
+                        indicator.textContent = '⚪';
+                }
+            }
+            
+            showError(message) {
+                this.errorMessage.textContent = message;
+                this.errorMessage.style.display = 'block';
+            }
+            
+            hideError() {
+                this.errorMessage.style.display = 'none';
+            }
+        }
+        
+        // Initialize the application when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new CheckyClient();
+        });
+    </script>
+</body>
+</html>

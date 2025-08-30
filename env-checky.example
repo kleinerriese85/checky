@@ -1,0 +1,18 @@
+# Checky Environment Configuration
+# Copy this file to .env and fill in your actual values
+
+# Google Cloud Configuration
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-credentials.json
+GOOGLE_CLOUD_PROJECT=your-google-cloud-project-id
+
+# Google AI Configuration  
+GEMINI_API_KEY=your-gemini-api-key-from-ai-studio
+
+# Application Configuration (Optional)
+DB_PATH=checky.db
+LOG_LEVEL=INFO
+
+# Development Settings (Optional)
+DEBUG=false
+HOST=0.0.0.0
+PORT=8000
