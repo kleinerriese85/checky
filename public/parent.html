@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checky - Eltern-Einstellungen</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 2rem;
+        }
+
+        .tabs {
+            display: flex;
+            margin-bottom: 2rem;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #f8f9fa;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 1rem;
+            background: #f8f9fa;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1rem;
+        }
+
+        .tab.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 1rem;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .message {
+            padding: 1rem;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .back-link {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(255,255,255,0.9);
+            color: #667eea;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 20px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .back-link:hover {
+            background: white;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border: 1px solid #bbdefb;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .info-box h3 {
+            color: #1976d2;
+            margin-bottom: 0.5rem;
+        }
+
+        .info-box p {
+            color: #424242;
+            line-height: 1.5;
+        }
+
+        .current-config {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .current-config h3 {
+            margin-bottom: 1rem;
+            color: #333;
+        }
+
+        .config-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .config-item:last-child {
+            border-bottom: none;
+        }
+
+        .config-item strong {
+            color: #667eea;
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 1rem;
+            }
+            
+            .header {
+                padding: 1.5rem;
+            }
+            
+            .content {
+                padding: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a href="index.html" class="back-link">← Zurück zu Checky</a>
+    
+    <div class="container">
+        <div class="header">
+            <h1>👨‍👩‍👧‍👦 Eltern-Bereich</h1>
+            <p>Einrichtung und Verwaltung für Checky</p>
+        </div>
+        
+        <div class="content">
+            <div id="message" class="message" style="display: none;"></div>
+            
+            <div class="tabs">
+                <button class="tab active" data-tab="onboard">Einrichtung</button>
+                <button class="tab" data-tab="settings">Einstellungen</button>
+            </div>
+            
+            <!-- Onboarding Tab -->
+            <div id="onboard-tab" class="tab-content active">
+                <div class="info-box">
+                    <h3>🚀 Erste Einrichtung</h3>
+                    <p>Richten Sie Checky für Ihr Kind ein. Sie benötigen das Alter Ihres Kindes und eine 4-stellige PIN für die Verwaltung der Einstellungen.</p>
+                </div>
+                
+                <form id="onboard-form">
+                    <div class="form-group">
+                        <label for="onboard-age">Alter Ihres Kindes</label>
+                        <select id="onboard-age" required>
+                            <option value="">Bitte wählen...</option>
+                            <option value="5">5 Jahre</option>
+                            <option value="6">6 Jahre</option>
+                            <option value="7">7 Jahre</option>
+                            <option value="8">8 Jahre</option>
+                            <option value="9">9 Jahre</option>
+                            <option value="10">10 Jahre</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="onboard-pin">4-stellige PIN (für Eltern)</label>
+                        <input type="password" id="onboard-pin" maxlength="4" pattern="[0-9]{4}" placeholder="1234" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="onboard-voice">Stimme für Checky</label>
+                        <select id="onboard-voice" required>
+                            <option value="de-DE-Standard-A">Standard weiblich</option>
+                            <option value="de-DE-Standard-B">Standard männlich</option>
+                            <option value="de-DE-Wavenet-A">Premium weiblich</option>
+                            <option value="de-DE-Wavenet-B">Premium männlich</option>
+                            <option value="de-DE-Wavenet-C">Premium weiblich 2</option>
+                            <option value="de-DE-Wavenet-D">Premium männlich 2</option>
+                        </select>
+                    </div>
+                    
+                    <button type="submit" class="btn">Checky einrichten</button>
+                </form>
+            </div>
+            
+            <!-- Settings Tab -->
+            <div id="settings-tab" class="tab-content">
+                <div class="current-config" id="current-config" style="display: none;">
+                    <h3>📋 Aktuelle Einstellungen</h3>
+                    <div class="config-item">
+                        <span>Alter:</span>
+                        <strong id="current-age">-</strong>
+                    </div>
+                    <div class="config-item">
+                        <span>Stimme:</span>
+                        <strong id="current-voice">-</strong>
+                    </div>
+                    <div class="config-item">
+                        <span>Eingerichtet am:</span>
+                        <strong id="current-created">-</strong>
+                    </div>
+                </div>
+                
+                <div class="info-box">
+                    <h3>⚙️ Einstellungen ändern</h3>
+                    <p>Geben Sie Ihre PIN ein, um die Einstellungen zu ändern. Sie können das Alter anpassen oder eine andere Stimme wählen.</p>
+                </div>
+                
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="login-pin">PIN eingeben</label>
+                        <input type="password" id="login-pin" maxlength="4" pattern="[0-9]{4}" placeholder="1234" required>
+                    </div>
+                    
+                    <button type="submit" class="btn">Anmelden</button>
+                </form>
+                
+                <form id="update-form" style="display: none;">
+                    <div class="form-group">
+                        <label for="update-pin">PIN zur Bestätigung</label>
+                        <input type="password" id="update-pin" maxlength="4" pattern="[0-9]{4}" placeholder="1234" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="update-age">Neues Alter (optional)</label>
+                        <select id="update-age">
+                            <option value="">Nicht ändern</option>
+                            <option value="5">5 Jahre</option>
+                            <option value="6">6 Jahre</option>
+                            <option value="7">7 Jahre</option>
+                            <option value="8">8 Jahre</option>
+                            <option value="9">9 Jahre</option>
+                            <option value="10">10 Jahre</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="update-voice">Neue Stimme (optional)</label>
+                        <select id="update-voice">
+                            <option value="">Nicht ändern</option>
+                            <option value="de-DE-Standard-A">Standard weiblich</option>
+                            <option value="de-DE-Standard-B">Standard männlich</option>
+                            <option value="de-DE-Wavenet-A">Premium weiblich</option>
+                            <option value="de-DE-Wavenet-B">Premium männlich</option>
+                            <option value="de-DE-Wavenet-C">Premium weiblich 2</option>
+                            <option value="de-DE-Wavenet-D">Premium männlich 2</option>
+                        </select>
+                    </div>
+                    
+                    <button type="submit" class="btn">Einstellungen speichern</button>
+                    <button type="button" class="btn" id="cancel-update" style="background: #6c757d; margin-top: 0.5rem;">Abbrechen</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class ParentPanel {
+            constructor() {
+                this.currentTab = 'onboard';
+                this.isAuthenticated = false;
+                
+                this.init();
+            }
+            
+            init() {
+                this.setupTabs();
+                this.setupForms();
+                this.loadCurrentConfig();
+            }
+            
+            setupTabs() {
+                const tabs = document.querySelectorAll('.tab');
+                const tabContents = document.querySelectorAll('.tab-content');
+                
+                tabs.forEach(tab => {
+                    tab.addEventListener('click', () => {
+                        const tabName = tab.dataset.tab;
+                        
+                        // Update tab buttons
+                        tabs.forEach(t => t.classList.remove('active'));
+                        tab.classList.add('active');
+                        
+                        // Update tab content
+                        tabContents.forEach(content => {
+                            content.classList.remove('active');
+                        });
+                        document.getElementById(`${tabName}-tab`).classList.add('active');
+                        
+                        this.currentTab = tabName;
+                        
+                        // Load config when switching to settings
+                        if (tabName === 'settings') {
+                            this.loadCurrentConfig();
+                        }
+                    });
+                });
+            }
+            
+            setupForms() {
+                // Onboarding form
+                document.getElementById('onboard-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    await this.handleOnboard();
+                });
+                
+                // Login form
+                document.getElementById('login-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    await this.handleLogin();
+                });
+                
+                // Update form
+                document.getElementById('update-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    await this.handleUpdate();
+                });
+                
+                // Cancel update
+                document.getElementById('cancel-update').addEventListener('click', () => {
+                    this.resetSettingsForm();
+                });
+            }
+            
+            async handleOnboard() {
+                const age = parseInt(document.getElementById('onboard-age').value);
+                const pin = document.getElementById('onboard-pin').value;
+                const ttsVoice = document.getElementById('onboard-voice').value;
+                
+                if (!age || !pin || pin.length !== 4) {
+                    this.showMessage('Bitte füllen Sie alle Felder korrekt aus.', 'error');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/onboard', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            age: age,
+                            pin: pin,
+                            tts_voice: ttsVoice
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        this.showMessage('Checky wurde erfolgreich eingerichtet! 🎉', 'success');
+                        document.getElementById('onboard-form').reset();
+                        
+                        // Switch to settings tab after successful onboarding
+                        setTimeout(() => {
+                            document.querySelector('[data-tab="settings"]').click();
+                        }, 2000);
+                    } else {
+                        this.showMessage(data.detail || 'Fehler beim Einrichten.', 'error');
+                    }
+                } catch (error) {
+                    this.showMessage('Verbindungsfehler. Bitte versuchen Sie es erneut.', 'error');
+                }
+            }
+            
+            async handleLogin() {
+                const pin = document.getElementById('login-pin').value;
+                
+                if (!pin || pin.length !== 4) {
+                    this.showMessage('Bitte geben Sie eine 4-stellige PIN ein.', 'error');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/parent/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ pin: pin })
+                    });
+                    
+                    if (response.ok) {
+                        this.showMessage('Erfolgreich angemeldet! ✅', 'success');
+                        this.showUpdateForm();
+                    } else {
+                        this.showMessage('Falsche PIN. Bitte versuchen Sie es erneut.', 'error');
+                    }
+                } catch (error) {
+                    this.showMessage('Verbindungsfehler. Bitte versuchen Sie es erneut.', 'error');
+                }
+            }
+            
+            async handleUpdate() {
+                const pin = document.getElementById('update-pin').value;
+                const age = document.getElementById('update-age').value;
+                const ttsVoice = document.getElementById('update-voice').value;
+                
+                if (!pin || pin.length !== 4) {
+                    this.showMessage('Bitte geben Sie Ihre PIN zur Bestätigung ein.', 'error');
+                    return;
+                }
+                
+                if (!age && !ttsVoice) {
+                    this.showMessage('Bitte wählen Sie mindestens eine Einstellung zum Ändern.', 'error');
+                    return;
+                }
+                
+                try {
+                    const requestBody = { pin: pin };
+                    if (age) requestBody.age = parseInt(age);
+                    if (ttsVoice) requestBody.tts_voice = ttsVoice;
+                    
+                    const response = await fetch('/parent/settings', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(requestBody)
+                    });
+                    
+                    if (response.ok) {
+                        this.showMessage('Einstellungen wurden erfolgreich aktualisiert! ✅', 'success');
+                        this.resetSettingsForm();
+                        this.loadCurrentConfig();
+                    } else {
+                        const data = await response.json();
+                        this.showMessage(data.detail || 'Fehler beim Aktualisieren.', 'error');
+                    }
+                } catch (error) {
+                    this.showMessage('Verbindungsfehler. Bitte versuchen Sie es erneut.', 'error');
+                }
+            }
+            
+            async loadCurrentConfig() {
+                try {
+                    const response = await fetch('/config');
+                    
+                    if (response.ok) {
+                        const config = await response.json();
+                        this.displayCurrentConfig(config);
+                    } else if (response.status === 404) {
+                        // No config found - user needs to onboard first
+                        document.getElementById('current-config').style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error('Error loading config:', error);
+                }
+            }
+            
+            displayCurrentConfig(config) {
+                const configDiv = document.getElementById('current-config');
+                const ageSpan = document.getElementById('current-age');
+                const voiceSpan = document.getElementById('current-voice');
+                const createdSpan = document.getElementById('current-created');
+                
+                ageSpan.textContent = `${config.child_age} Jahre`;
+                voiceSpan.textContent = this.getVoiceName(config.tts_voice);
+                
+                const createdDate = new Date(config.created_at).toLocaleDateString('de-DE');
+                createdSpan.textContent = createdDate;
+                
+                configDiv.style.display = 'block';
+            }
+            
+            getVoiceName(voiceId) {
+                const voices = {
+                    'de-DE-Standard-A': 'Standard weiblich',
+                    'de-DE-Standard-B': 'Standard männlich',
+                    'de-DE-Wavenet-A': 'Premium weiblich',
+                    'de-DE-Wavenet-B': 'Premium männlich',
+                    'de-DE-Wavenet-C': 'Premium weiblich 2',
+                    'de-DE-Wavenet-D': 'Premium männlich 2'
+                };
+                return voices[voiceId] || voiceId;
+            }
+            
+            showUpdateForm() {
+                document.getElementById('login-form').style.display = 'none';
+                document.getElementById('update-form').style.display = 'block';
+            }
+            
+            resetSettingsForm() {
+                document.getElementById('login-form').style.display = 'block';
+                document.getElementById('update-form').style.display = 'none';
+                document.getElementById('login-form').reset();
+                document.getElementById('update-form').reset();
+            }
+            
+            showMessage(text, type) {
+                const messageDiv = document.getElementById('message');
+                messageDiv.textContent = text;
+                messageDiv.className = `message ${type}`;
+                messageDiv.style.display = 'block';
+                
+                // Auto-hide success messages after 5 seconds
+                if (type === 'success') {
+                    setTimeout(() => {
+                        messageDiv.style.display = 'none';
+                    }, 5000);
+                }
+            }
+        }
+        
+        // Initialize the parent panel when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new ParentPanel();
+        });
+    </script>
+</body>
+</html>
