@@ -127,9 +127,6 @@ PORT = int(os.getenv('PORT', '8000'))
 # Rate limiter configuration
 limiter = Limiter(key_func=get_remote_address)
 
-# Global variables for pipeline management
-active_connections: Dict[str, Dict[str, Any]] = {}
-
 
 # Request/Response models
 class CheckRequest(BaseModel):
@@ -447,134 +444,61 @@ async def check_data(
         )
 
 
-# WebSocket endpoint for voice chat
+# Minimalist WebSocket endpoint for voice chat
 @app.websocket("/chat")
 async def websocket_chat(websocket: WebSocket):
     """
-    WebSocket endpoint for real-time voice chat with Checky.
+    Minimalist WebSocket endpoint for real-time voice chat with Checky.
     
-    Handles audio input/output streaming through the CheckyPipeline.
+    Accepts connection and passes control directly to pipecat's transport layer.
     """
-    client_id = f"client_{id(websocket)}"
-    
     try:
-        # Accept WebSocket connection first
+        # Accept WebSocket connection
         await websocket.accept()
-        logger.info(f"WebSocket client connected: {client_id}")
+        logger.info("WebSocket client connected")
         
         # Check if pipecat is available
         if not PIPECAT_AVAILABLE:
-            error_msg = '{"error": "Voice chat functionality not available. Missing pipecat dependency."}'
-            await websocket.send_text(error_msg)
-            await websocket.close(code=1011, reason="Missing dependencies")
+            await websocket.send_text('{"error": "Voice chat not available - missing pipecat"}')
+            await websocket.close(code=1011)
             return
             
-        # Get user configuration from database
+        # Verify user configuration exists  
         config = db.get_config()
         if not config:
-            error_msg = '{"error": "No configuration found. Please onboard first."}'
-            await websocket.send_text(error_msg)
-            await websocket.close(code=1008, reason="No user configuration")
+            await websocket.send_text('{"error": "Please complete onboarding first"}')
+            await websocket.close(code=1008)
             return
         
-        # Create transport parameters with VAD
+        # Create transport with minimal configuration
         transport_params = FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=True,
             vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
-            vad_audio_passthrough=True,
         )
         
-        # Create transport for this WebSocket connection
-        transport = FastAPIWebsocketTransport(
-            websocket=websocket,
-            params=transport_params,
-        )
+        transport = FastAPIWebsocketTransport(websocket, transport_params)
         
-        # Create CheckyPipeline instance
+        # Create pipeline and task
         pipeline = CheckyPipeline(transport=transport)
         task = pipeline.create_task(idle_timeout_secs=300)
         
-        # Store connection info
-        active_connections[client_id] = {
-            "websocket": websocket,
-            "transport": transport,
-            "pipeline": pipeline,
-            "task": task,
-            "config": config,
-        }
-        
-        # Set up event handlers for connection lifecycle
-        @transport.event_handler("on_client_connected")
-        async def on_client_connected(transport, client):
-            logger.info(f"Pipeline transport connected for: {client_id}")
-            try:
-                # Send initial welcome message
-                from pipecat.frames.frames import TextFrame
-                welcome_text = f"Hallo! Ich bin Checky, dein Assistent. Wie kann ich dir heute helfen?"
-                await task.queue_frame(TextFrame(welcome_text))
-            except Exception as e:
-                logger.error(f"Error sending welcome message: {e}")
-        
-        @transport.event_handler("on_client_disconnected")
-        async def on_client_disconnected(transport, client):
-            logger.info(f"Pipeline transport disconnected for: {client_id}")
-            try:
-                await task.cancel()
-            except Exception as e:
-                logger.error(f"Error canceling task on disconnect: {e}")
-        
-        # Start the pipeline task
+        # Let pipecat handle everything - minimal custom logic
         runner = PipelineRunner()
         await runner.run(task)
         
     except WebSocketDisconnect:
-        logger.info(f"WebSocket client disconnected: {client_id}")
+        logger.info("WebSocket client disconnected")
     except Exception as e:
-        logger.error(f"WebSocket error for {client_id}: {e}", exc_info=True)
+        logger.error(f"WebSocket error: {e}")
         try:
-            if websocket.client_state.name != "DISCONNECTED":
-                error_msg = f'{{"error": "Connection error: {str(e)[:100]}"}}'
-                await websocket.send_text(error_msg)
-                await websocket.close(code=1011, reason="Internal error")
-        except Exception as cleanup_error:
-            logger.error(f"Error during error handling for {client_id}: {cleanup_error}")
-    finally:
-        # Clean up connection
-        await _cleanup_connection(client_id)
+            await websocket.close(code=1011)
+        except:
+            pass
 
 
-async def _cleanup_connection(client_id: str):
-    """Clean up connection resources."""
-    if client_id in active_connections:
-        try:
-            connection_info = active_connections[client_id]
-            
-            # Cancel the pipeline task
-            if "task" in connection_info:
-                try:
-                    await connection_info["task"].cancel()
-                except Exception as e:
-                    logger.error(f"Error canceling task during cleanup for {client_id}: {e}")
-            
-            # Clean up transport
-            if "transport" in connection_info:
-                try:
-                    transport = connection_info["transport"]
-                    # Any additional transport cleanup if needed
-                except Exception as e:
-                    logger.error(f"Error cleaning up transport for {client_id}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Error during cleanup for {client_id}: {e}")
-        finally:
-            # Always remove from active connections
-            del active_connections[client_id]
-            logger.info(f"Cleaned up connection: {client_id}")
-    else:
-        logger.debug(f"Connection {client_id} not found in active connections for cleanup")
 
 
 # Mount static files for frontend (if public directory exists)
