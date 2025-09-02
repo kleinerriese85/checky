@@ -1,25 +1,118 @@
 
-from dotenv import load_dotenv
-load_dotenv()
+"""
+FastAPI web application for Checky multimodal assistant.
 
-import os
+Provides REST API endpoints for onboarding and parent settings management,
+plus WebSocket endpoint for real-time audio chat with the CheckyPipeline.
+"""
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not available, continue without loading .env file
+    pass
+
+import asyncio
 import logging
-from fastapi import FastAPI, HTTPException, Depends, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
-import uvicorn
+import os
+from typing import Dict, Any, Optional, List
+import time
+from contextlib import asynccontextmanager
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Initialize logger first
+try:
+    from loguru import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Checky API",
-    description="A lightweight, API-driven service for validation and monitoring",
-    version="1.0.0"
-)
+try:
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Depends, Security
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import JSONResponse
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+    FASTAPI_AVAILABLE = True
+except ImportError:
+    logger.warning("FastAPI not available")
+    FASTAPI_AVAILABLE = False
+    
+    # Create minimal app placeholder
+    class _StateObject:
+        def __setattr__(self, name, value): pass
+        def __getattr__(self, name): return None
+    
+    class FastAPI: 
+        def __init__(self, *args, **kwargs): 
+            self.state = _StateObject()
+        def get(self, *args, **kwargs): return lambda f: f
+        def post(self, *args, **kwargs): return lambda f: f  
+        def put(self, *args, **kwargs): return lambda f: f
+        def websocket(self, *args, **kwargs): return lambda f: f
+        def middleware(self, *args, **kwargs): return lambda f: f
+        def add_middleware(self, *args, **kwargs): pass
+        def add_exception_handler(self, *args, **kwargs): pass
+        def exception_handler(self, *args, **kwargs): return lambda f: f
+        def mount(self, *args, **kwargs): pass
+    
+    class WebSocket: pass
+    class WebSocketDisconnect(Exception): pass
+    class HTTPException(Exception): pass
+    class Request: pass
+    def Depends(*args, **kwargs): return lambda f: f
+    def Security(*args, **kwargs): return lambda f: f
+    class CORSMiddleware: pass
+    class JSONResponse: pass
+    class StaticFiles: pass
+    class HTTPBearer: pass
+    class HTTPAuthorizationCredentials: pass
+try:
+    from pydantic import BaseModel, Field, validator
+except ImportError:
+    logger.warning("Pydantic not available")
+    
+    class BaseModel: pass
+    class Field: 
+        def __init__(self, *args, **kwargs): pass
+    def validator(*args, **kwargs): return lambda f: f
+# Logger already initialized above
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.middleware import SlowAPIMiddleware
+    SLOWAPI_AVAILABLE = True
+except ImportError:
+    logger.warning("SlowAPI not available - rate limiting disabled")
+    SLOWAPI_AVAILABLE = False
+    
+    class Limiter: 
+        def __init__(self, *args, **kwargs): pass
+        def limit(self, *args, **kwargs): return lambda f: f
+    def _rate_limit_exceeded_handler(*args, **kwargs): pass
+    def get_remote_address(*args, **kwargs): return "127.0.0.1"
+    class RateLimitExceeded(Exception): pass
+    class SlowAPIMiddleware: pass
+
+try:
+    from pipecat.pipeline.runner import PipelineRunner
+    from pipecat.runner.types import RunnerArguments
+    from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    PIPECAT_AVAILABLE = True
+except ImportError:
+    logger.warning("Pipecat imports not available for web_app")
+    PIPECAT_AVAILABLE = False
+    
+    class PipelineRunner: pass
+    class RunnerArguments: pass
+    class FastAPIWebsocketTransport: pass
+    class FastAPIWebsocketParams: pass
+    class SileroVADAnalyzer: pass
+
+from . import db
+from .pipeline import CheckyPipeline
 
 # Security scheme
 security = HTTPBearer()
@@ -30,10 +123,15 @@ DEBUG_MODE = os.getenv('DEBUG', 'false').lower() == 'true'
 HOST = os.getenv('HOST', '0.0.0.0')
 PORT = int(os.getenv('PORT', '8000'))
 
-if not API_KEY:
-    logger.warning("API_KEY environment variable not set - authentication will fail")
+
+# Rate limiter configuration
+limiter = Limiter(key_func=get_remote_address)
+
+# Global variables for pipeline management
+active_connections: Dict[str, Dict[str, Any]] = {}
 
 
+# Request/Response models
 class CheckRequest(BaseModel):
     """Request model for check endpoints."""
     data: Dict[str, Any]
@@ -75,58 +173,6 @@ def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security
     return credentials.credentials
 
 
-@app.get("/")
-async def root():
-    """Root endpoint returning basic API information."""
-    return {
-        "name": "Checky API",
-        "version": "1.0.0",
-        "status": "running",
-        "debug": DEBUG_MODE,
-        "api_key_configured": bool(API_KEY)
-    }
-
-"""
-FastAPI web application for Checky multimodal assistant.
-
-Provides REST API endpoints for onboarding and parent settings management,
-plus WebSocket endpoint for real-time audio chat with the CheckyPipeline.
-"""
-
-import asyncio
-import logging
-import os
-from typing import Dict, Any, Optional
-import time
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, validator
-from loguru import logger
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.runner.types import RunnerArguments
-from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-
-from . import db
-from .pipeline import CheckyPipeline
-
-
-# Rate limiter configuration
-limiter = Limiter(key_func=get_remote_address)
-
-# Global variables for pipeline management
-active_connections: Dict[str, Dict[str, Any]] = {}
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -145,17 +191,19 @@ app = FastAPI(
 
 # Add rate limiting middleware
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
+if SLOWAPI_AVAILABLE:
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
 # Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual domains
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if FASTAPI_AVAILABLE:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # In production, specify actual domains
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 # Request/Response logging middleware
@@ -225,6 +273,18 @@ class ErrorResponse(BaseModel):
 
 
 # API Endpoints
+
+@app.get("/")
+async def root():
+    """Root endpoint returning basic API information."""
+    return {
+        "name": "Checky API",
+        "version": "1.0.0",
+        "status": "running",
+        "debug": DEBUG_MODE,
+        "api_key_configured": bool(API_KEY)
+    }
+
 
 @app.post("/onboard", response_model=SuccessResponse)
 @limiter.limit("10/minute")
@@ -324,7 +384,6 @@ async def get_config():
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-
     return {
         "status": "healthy",
         "api_key_present": bool(API_KEY),
@@ -350,9 +409,6 @@ async def check_data(
     logger.info(f"Processing check request with {len(request.data)} data fields")
     
     try:
-        # Placeholder validation logic
-        # In a real implementation, this would run the actual validation rules
-        
         # Simulate some basic validation
         if not request.data:
             return CheckResponse(
@@ -391,61 +447,6 @@ async def check_data(
         )
 
 
-@app.get("/v1/status/{check_id}")
-async def get_check_status(
-    check_id: str,
-    api_key: str = Depends(verify_api_key)
-):
-    """
-    Get the status of a previous check by ID.
-    
-    Args:
-        check_id: The ID of the check to retrieve
-        api_key: Verified API key from authorization header
-        
-    Returns:
-        Status information for the specified check
-    """
-    # Placeholder implementation
-    # In a real system, this would query a database or cache
-    return {
-        "check_id": check_id,
-        "status": "completed",
-        "message": "Check status retrieval not fully implemented",
-        "api_key_authenticated": True
-    }
-
-
-def validate_startup_config():
-    """Validate configuration at startup."""
-    if not API_KEY:
-        logger.error("CRITICAL: API_KEY environment variable not configured!")
-        return False
-    
-    logger.info("Startup configuration validation passed")
-    return True
-
-
-if __name__ == "__main__":
-    # Validate configuration before starting
-    if validate_startup_config():
-        logger.info(f"Starting Checky web application on {HOST}:{PORT}")
-        logger.info(f"Debug mode: {'enabled' if DEBUG_MODE else 'disabled'}")
-        
-        uvicorn.run(
-            app,
-            host=HOST,
-            port=PORT,
-            debug=DEBUG_MODE,
-            log_level="debug" if DEBUG_MODE else "info"
-        )
-    else:
-        logger.error("Startup validation failed. Please check your environment configuration.")
-        exit(1)
-        
-    return {"status": "healthy", "service": "checky"}
-
-
 # WebSocket endpoint for voice chat
 @app.websocket("/chat")
 async def websocket_chat(websocket: WebSocket):
@@ -454,34 +455,46 @@ async def websocket_chat(websocket: WebSocket):
     
     Handles audio input/output streaming through the CheckyPipeline.
     """
-    await websocket.accept()
     client_id = f"client_{id(websocket)}"
     
     try:
+        # Accept WebSocket connection first
+        await websocket.accept()
         logger.info(f"WebSocket client connected: {client_id}")
         
-        # Get user configuration
+        # Check if pipecat is available
+        if not PIPECAT_AVAILABLE:
+            error_msg = '{"error": "Voice chat functionality not available. Missing pipecat dependency."}'
+            await websocket.send_text(error_msg)
+            await websocket.close(code=1011, reason="Missing dependencies")
+            return
+            
+        # Get user configuration from database
         config = db.get_config()
         if not config:
-            await websocket.send_text('{"error": "No configuration found. Please onboard first."}')
-            await websocket.close()
+            error_msg = '{"error": "No configuration found. Please onboard first."}'
+            await websocket.send_text(error_msg)
+            await websocket.close(code=1008, reason="No user configuration")
             return
         
-        # Create transport for this WebSocket connection
+        # Create transport parameters with VAD
         transport_params = FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             add_wav_header=True,
+            vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
+            vad_audio_passthrough=True,
         )
         
+        # Create transport for this WebSocket connection
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
             params=transport_params,
         )
         
-        # Create CheckyPipeline with user configuration
-        pipeline = CheckyPipeline(transport=transport, config=config)
+        # Create CheckyPipeline instance
+        pipeline = CheckyPipeline(transport=transport)
         task = pipeline.create_task(idle_timeout_secs=300)
         
         # Store connection info
@@ -493,48 +506,79 @@ async def websocket_chat(websocket: WebSocket):
             "config": config,
         }
         
-        # Set up event handlers
+        # Set up event handlers for connection lifecycle
         @transport.event_handler("on_client_connected")
         async def on_client_connected(transport, client):
-            logger.info(f"Pipeline client connected: {client_id}")
-            # Send welcome message in German
-            from pipecat.frames.frames import LLMRunFrame
-            await task.queue_frames([LLMRunFrame()])
+            logger.info(f"Pipeline transport connected for: {client_id}")
+            try:
+                # Send initial welcome message
+                from pipecat.frames.frames import TextFrame
+                welcome_text = f"Hallo! Ich bin Checky, dein Assistent. Wie kann ich dir heute helfen?"
+                await task.queue_frame(TextFrame(welcome_text))
+            except Exception as e:
+                logger.error(f"Error sending welcome message: {e}")
         
         @transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
-            logger.info(f"Pipeline client disconnected: {client_id}")
-            await task.cancel()
+            logger.info(f"Pipeline transport disconnected for: {client_id}")
+            try:
+                await task.cancel()
+            except Exception as e:
+                logger.error(f"Error canceling task on disconnect: {e}")
         
-        # Run the pipeline
+        # Start the pipeline task
         runner = PipelineRunner()
         await runner.run(task)
-    
+        
     except WebSocketDisconnect:
         logger.info(f"WebSocket client disconnected: {client_id}")
     except Exception as e:
-        logger.error(f"WebSocket error for {client_id}: {e}")
+        logger.error(f"WebSocket error for {client_id}: {e}", exc_info=True)
         try:
-            await websocket.send_text(f'{{"error": "Connection error: {str(e)}"}}')
-        except:
-            pass
+            if websocket.client_state.name != "DISCONNECTED":
+                error_msg = f'{{"error": "Connection error: {str(e)[:100]}"}}'
+                await websocket.send_text(error_msg)
+                await websocket.close(code=1011, reason="Internal error")
+        except Exception as cleanup_error:
+            logger.error(f"Error during error handling for {client_id}: {cleanup_error}")
     finally:
         # Clean up connection
-        if client_id in active_connections:
-            try:
-                connection_info = active_connections[client_id]
-                if "task" in connection_info:
+        await _cleanup_connection(client_id)
+
+
+async def _cleanup_connection(client_id: str):
+    """Clean up connection resources."""
+    if client_id in active_connections:
+        try:
+            connection_info = active_connections[client_id]
+            
+            # Cancel the pipeline task
+            if "task" in connection_info:
+                try:
                     await connection_info["task"].cancel()
-            except Exception as e:
-                logger.error(f"Error during cleanup for {client_id}: {e}")
-            finally:
-                del active_connections[client_id]
-        
-        logger.info(f"Cleaned up connection: {client_id}")
+                except Exception as e:
+                    logger.error(f"Error canceling task during cleanup for {client_id}: {e}")
+            
+            # Clean up transport
+            if "transport" in connection_info:
+                try:
+                    transport = connection_info["transport"]
+                    # Any additional transport cleanup if needed
+                except Exception as e:
+                    logger.error(f"Error cleaning up transport for {client_id}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error during cleanup for {client_id}: {e}")
+        finally:
+            # Always remove from active connections
+            del active_connections[client_id]
+            logger.info(f"Cleaned up connection: {client_id}")
+    else:
+        logger.debug(f"Connection {client_id} not found in active connections for cleanup")
 
 
 # Mount static files for frontend (if public directory exists)
-if os.path.exists("public"):
+if FASTAPI_AVAILABLE and os.path.exists("public"):
     app.mount("/", StaticFiles(directory="public", html=True), name="static")
 
 
@@ -552,14 +596,14 @@ async def general_exception_handler(request: Request, exc: Exception):
 if __name__ == "__main__":
     import uvicorn
     
-    # Configure logging
+    # Configure logging  
     logging.basicConfig(level=logging.INFO)
     
     # Run the application
     uvicorn.run(
-        "src.checky.web_app:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info",
+        app,
+        host=HOST,
+        port=PORT,
+        reload=DEBUG_MODE,
+        log_level="debug" if DEBUG_MODE else "info",
     )

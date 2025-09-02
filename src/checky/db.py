@@ -6,13 +6,23 @@ user configuration including child age, PIN authentication, and TTS voice prefer
 """
 
 import sqlite3
-import bcrypt
+try:
+    import bcrypt
+    BCRYPT_AVAILABLE = True
+except ImportError:
+    BCRYPT_AVAILABLE = False
+    import hashlib
+    # Fallback for bcrypt functionality (less secure, for development only)
 import os
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 
-from loguru import logger
+try:
+    from loguru import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 class CheckyDatabase:
@@ -86,7 +96,11 @@ class CheckyDatabase:
         
         try:
             # Hash the PIN for secure storage
-            pin_hash = bcrypt.hashpw(pin.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            if BCRYPT_AVAILABLE:
+                pin_hash = bcrypt.hashpw(pin.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            else:
+                # Fallback hash (development only - not secure for production)
+                pin_hash = hashlib.sha256(pin.encode('utf-8')).hexdigest()
             
             with sqlite3.connect(self.db_path) as conn:
                 # Check if a user already exists
@@ -130,7 +144,12 @@ class CheckyDatabase:
                     return False
                 
                 stored_hash = row[0]
-                return bcrypt.checkpw(pin.encode('utf-8'), stored_hash.encode('utf-8'))
+                if BCRYPT_AVAILABLE:
+                    return bcrypt.checkpw(pin.encode('utf-8'), stored_hash.encode('utf-8'))
+                else:
+                    # Fallback comparison (development only - not secure for production)
+                    pin_hash = hashlib.sha256(pin.encode('utf-8')).hexdigest()
+                    return pin_hash == stored_hash
         except Exception as e:
             logger.error(f"Failed to authenticate PIN: {e}")
             return False

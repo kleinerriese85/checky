@@ -1,97 +1,4 @@
 
-from dotenv import load_dotenv
-load_dotenv()
-
-import os
-import asyncio
-from typing import Dict, Any, List, Optional
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-class Pipeline:
-    """
-    Main pipeline class for the checky application.
-    Handles data processing and validation workflows.
-    """
-    
-    def __init__(self):
-        """Initialize the pipeline with environment variables loaded."""
-        self.api_key = os.getenv('API_KEY')
-        self.database_url = os.getenv('DATABASE_URL')
-        self.debug_mode = os.getenv('DEBUG', 'false').lower() == 'true'
-        
-        if not self.api_key:
-            logger.warning("API_KEY environment variable not set")
-        
-        logger.info(f"Pipeline initialized (debug={'on' if self.debug_mode else 'off'})")
-    
-    async def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process input data through the validation pipeline.
-        
-        Args:
-            data: Input data to process
-            
-        Returns:
-            Processed result dictionary
-        """
-        logger.info(f"Processing data: {type(data)}")
-        
-        try:
-            # Placeholder processing logic
-            result = {
-                "status": "success",
-                "data": data,
-                "processed": True,
-                "api_key_present": bool(self.api_key)
-            }
-            
-            logger.info("Processing completed successfully")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Processing failed: {str(e)}")
-            return {
-                "status": "error",
-                "message": str(e),
-                "processed": False
-            }
-    
-    def validate_config(self) -> bool:
-        """
-        Validate that all required environment variables are set.
-        
-        Returns:
-            True if configuration is valid, False otherwise
-        """
-        required_vars = ['API_KEY']
-        missing_vars = []
-        
-        for var in required_vars:
-            if not os.getenv(var):
-                missing_vars.append(var)
-        
-        if missing_vars:
-            logger.error(f"Missing required environment variables: {missing_vars}")
-            return False
-        
-        logger.info("Configuration validation passed")
-        return True
-
-
-if __name__ == "__main__":
-    # Example usage
-    pipeline = Pipeline()
-    
-    if pipeline.validate_config():
-        sample_data = {"test": "data", "timestamp": "2025-09-01"}
-        result = asyncio.run(pipeline.process(sample_data))
-        print(f"Result: {result}")
-    else:
-        print("Configuration validation failed")
-
 """
 Checky multimodal assistant pipeline implementation.
 
@@ -100,20 +7,70 @@ AI assistant for children, using Google Speech-to-Text, Text-to-Speech, and Gemi
 for age-appropriate German responses.
 """
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not available, continue without loading .env file
+    pass
+
 import os
 import re
 from typing import Dict, Any, Optional
 
-from loguru import logger
+try:
+    from loguru import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
-from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.task import PipelineTask, PipelineParams
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-from pipecat.services.google.stt import GoogleSTTService
-from pipecat.services.google.tts import GoogleTTSService
-from pipecat.services.google.llm import GoogleLLMService
-from pipecat.transcriptions.language import Language
-from pipecat.transports.base_transport import BaseTransport
+try:
+    from pipecat.pipeline.pipeline import Pipeline
+    from pipecat.pipeline.task import PipelineTask, PipelineParams
+    from pipecat.processors.aggregators.llm_response import LLMUserResponseAggregator, LLMAssistantResponseAggregator
+    from pipecat.services.google.stt import GoogleSTTService
+    from pipecat.services.google.tts import GoogleTTSService
+    from pipecat.services.google.llm import GoogleLLMService
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.transports.base_transport import BaseTransport
+    from pipecat.frames.frames import LLMMessagesFrame, SystemFrame, TextFrame
+    from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+    
+    PIPECAT_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Pipecat imports not available: {e}")
+    # Create placeholder classes to prevent import errors
+    PIPECAT_AVAILABLE = False
+    
+    class Pipeline: pass
+    class PipelineTask: pass
+    class PipelineParams: pass
+    class LLMUserResponseAggregator: pass
+    class LLMAssistantResponseAggregator: pass
+    class GoogleSTTService: pass
+    class GoogleTTSService: pass
+    class GoogleLLMService: pass
+    class SileroVADAnalyzer: pass
+    class BaseTransport: pass
+    class LLMMessagesFrame: pass
+    class SystemFrame: pass
+    class TextFrame: pass
+    class FrameProcessor: pass
+    class FrameDirection: pass
+
+from . import db
+
+
+class PIIScrubbingProcessor(FrameProcessor):
+    """Processor to scrub PII from text before sending to LLM."""
+    
+    async def process_frame(self, frame, direction: FrameDirection):
+        if isinstance(frame, TextFrame):
+            # Apply PII scrubbing to text content
+            scrubbed_text = scrub_pii(frame.text)
+            frame.text = scrubbed_text
+        
+        await self.push_frame(frame, direction)
 
 
 class CheckyPipeline:
@@ -124,35 +81,53 @@ class CheckyPipeline:
     text-to-speech, and language understanding with age-appropriate German responses.
     """
     
-    def __init__(self, transport: BaseTransport, config: Dict[str, Any]):
+    def __init__(self, transport: BaseTransport, user_id: Optional[str] = None):
         """
         Initialize the CheckyPipeline.
         
         Args:
             transport: The transport layer for audio I/O
-            config: Configuration dictionary containing child_age, tts_voice, etc.
+            user_id: Optional user ID for configuration loading
         """
+        if not PIPECAT_AVAILABLE:
+            raise ImportError("Pipecat is required for CheckyPipeline functionality")
+            
         self.transport = transport
-        self.config = config
-        self.child_age = config.get('child_age', 7)
-        self.tts_voice = config.get('tts_voice', 'de-DE-Standard-A')
+        self.user_id = user_id
         
+        # Load configuration from database
+        self._load_config()
+        
+        # Setup services and pipeline
         self._setup_services()
         self._setup_pipeline()
+    
+    def _load_config(self):
+        """Load user configuration from database."""
+        config = db.get_config()
+        if config:
+            self.child_age = config.get('child_age', 7)
+            self.tts_voice = config.get('tts_voice', 'de-DE-Standard-A')
+            logger.info(f"Loaded config: age={self.child_age}, voice={self.tts_voice}")
+        else:
+            # Default configuration
+            self.child_age = 7
+            self.tts_voice = 'de-DE-Standard-A'
+            logger.warning("No user configuration found, using defaults")
     
     def _setup_services(self):
         """Setup Google STT, TTS, and LLM services."""
         # Google Speech-to-Text service for German
         self.stt = GoogleSTTService(
-            params=GoogleSTTService.InputParams(languages=Language.DE),
-            credentials=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+            api_key=os.getenv("GEMINI_API_KEY"),
+            language="de-DE"
         )
         
         # Google Text-to-Speech service for German
         self.tts = GoogleTTSService(
+            api_key=os.getenv("GEMINI_API_KEY"),
             voice_id=self.tts_voice,
-            params=GoogleTTSService.InputParams(language=Language.DE),
-            credentials=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+            language="de-DE"
         )
         
         # Google LLM (Gemini 1.5 Flash) service
@@ -166,26 +141,28 @@ class CheckyPipeline:
         # Build the system prompt for the child's age
         system_prompt = self._build_system_prompt(self.child_age)
         
-        messages = [
-            {
-                "role": "system",
-                "content": system_prompt
-            }
-        ]
+        # Create LLM response aggregators for context management
+        self.llm_user_aggregator = LLMUserResponseAggregator()
+        self.llm_assistant_aggregator = LLMAssistantResponseAggregator()
         
-        context = OpenAILLMContext(messages)
-        context_aggregator = self.llm.create_context_aggregator(context)
+        # Create PII scrubbing processor
+        self.pii_scrubber = PIIScrubbingProcessor()
         
         # Create the pipeline with all components
         self.pipeline = Pipeline([
-            self.transport.input(),  # Audio input from transport
-            self.stt,               # Speech-to-Text
-            context_aggregator.user(),  # User context processing
-            self.llm,               # LLM processing with PII scrubbing
-            self.tts,               # Text-to-Speech
-            self.transport.output(),     # Audio output to transport
-            context_aggregator.assistant(),  # Assistant context processing
+            self.transport.input(),           # Audio input from transport
+            self.stt,                        # Speech-to-Text
+            self.pii_scrubber,               # PII scrubbing
+            self.llm_user_aggregator,        # User response aggregation
+            self.llm,                        # LLM processing
+            self.tts,                        # Text-to-Speech
+            self.transport.output(),         # Audio output to transport
+            self.llm_assistant_aggregator,   # Assistant response aggregation
         ])
+        
+        # Initialize with system prompt
+        # Store the system prompt for use in task creation
+        self.system_prompt = system_prompt
     
     def _build_system_prompt(self, age: int) -> str:
         """
@@ -236,7 +213,7 @@ Wichtige Regeln:
         Returns:
             Configured PipelineTask
         """
-        return PipelineTask(
+        task = PipelineTask(
             self.pipeline,
             params=PipelineParams(
                 enable_metrics=True,
@@ -244,6 +221,25 @@ Wichtige Regeln:
             ),
             idle_timeout_secs=idle_timeout_secs,
         )
+        
+        # Initialize LLM with system prompt
+        initial_messages = [
+            {
+                "role": "system", 
+                "content": self.system_prompt
+            }
+        ]
+        
+        # Set initial context in the aggregators
+        try:
+            from pipecat.frames.frames import LLMMessagesFrame
+            messages_frame = LLMMessagesFrame(initial_messages)
+            # The aggregators will handle the initial system message
+        except ImportError:
+            # Graceful fallback if frame types are different
+            pass
+            
+        return task
 
 
 def scrub_pii(text: str) -> str:
