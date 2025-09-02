@@ -27,13 +27,11 @@ except ImportError:
 try:
     from pipecat.pipeline.pipeline import Pipeline
     from pipecat.pipeline.task import PipelineTask, PipelineParams
-    from pipecat.processors.aggregators.llm_response import LLMUserResponseAggregator, LLMAssistantResponseAggregator
     from pipecat.services.google.stt import GoogleSTTService
     from pipecat.services.google.tts import GoogleTTSService
     from pipecat.services.google.llm import GoogleLLMService
-    from pipecat.audio.vad.silero import SileroVADAnalyzer
     from pipecat.transports.base_transport import BaseTransport
-    from pipecat.frames.frames import LLMMessagesFrame, SystemFrame, TextFrame
+    from pipecat.frames.frames import TextFrame, ErrorFrame
     from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
     
     PIPECAT_AVAILABLE = True
@@ -45,16 +43,12 @@ except ImportError as e:
     class Pipeline: pass
     class PipelineTask: pass
     class PipelineParams: pass
-    class LLMUserResponseAggregator: pass
-    class LLMAssistantResponseAggregator: pass
     class GoogleSTTService: pass
     class GoogleTTSService: pass
     class GoogleLLMService: pass
-    class SileroVADAnalyzer: pass
     class BaseTransport: pass
-    class LLMMessagesFrame: pass
-    class SystemFrame: pass
     class TextFrame: pass
+    class ErrorFrame: pass
     class FrameProcessor: pass
     class FrameDirection: pass
 
@@ -62,15 +56,43 @@ from . import db
 
 
 class PIIScrubbingProcessor(FrameProcessor):
-    """Processor to scrub PII from text before sending to LLM."""
+    """Pipecat-compliant processor to scrub PII from text before sending to LLM."""
+    
+    def __init__(self, **kwargs):
+        """Initialize the PII scrubbing processor."""
+        super().__init__(**kwargs)
     
     async def process_frame(self, frame, direction: FrameDirection):
-        if isinstance(frame, TextFrame):
-            # Apply PII scrubbing to text content
-            scrubbed_text = scrub_pii(frame.text)
-            frame.text = scrubbed_text
+        """Process frames with proper pipecat patterns."""
+        # Always call parent first for proper pipeline integration
+        await super().process_frame(frame, direction)
         
-        await self.push_frame(frame, direction)
+        try:
+            # Only process text frames in downstream direction
+            if isinstance(frame, TextFrame) and direction == FrameDirection.DOWNSTREAM:
+                # Apply PII scrubbing to text content
+                scrubbed_text = scrub_pii(frame.text)
+                
+                # Create new frame with scrubbed content
+                scrubbed_frame = TextFrame(text=scrubbed_text)
+                
+                # Preserve metadata if present
+                if hasattr(frame, 'metadata'):
+                    scrubbed_frame.metadata = frame.metadata.copy()
+                
+                await self.push_frame(scrubbed_frame, direction)
+            else:
+                # Pass through all other frames unchanged (SystemFrames, StartFrames, etc.)
+                await self.push_frame(frame, direction)
+                
+        except Exception as e:
+            # Proper error handling - don't crash the pipeline
+            logger.error(f"Error in PIIScrubbingProcessor: {e}")
+            try:
+                from pipecat.frames.frames import ErrorFrame
+                await self.push_error(ErrorFrame(str(e)))
+            except Exception as error_handling_error:
+                logger.critical(f"Failed to handle PII scrubbing error: {error_handling_error}")
 
 
 class CheckyPipeline:
@@ -116,53 +138,80 @@ class CheckyPipeline:
             logger.warning("No user configuration found, using defaults")
     
     def _setup_services(self):
-        """Setup Google STT, TTS, and LLM services."""
-        # Google Speech-to-Text service for German
-        self.stt = GoogleSTTService(
-            api_key=os.getenv("GEMINI_API_KEY"),
-            language="de-DE"
-        )
-        
-        # Google Text-to-Speech service for German
-        self.tts = GoogleTTSService(
-            api_key=os.getenv("GEMINI_API_KEY"),
-            voice_id=self.tts_voice,
-            language="de-DE"
-        )
-        
-        # Google LLM (Gemini 1.5 Flash) service
-        self.llm = GoogleLLMService(
-            api_key=os.getenv("GEMINI_API_KEY"),
-            model="gemini-1.5-flash",
-        )
+        """Setup Google STT, TTS, and LLM services with proper pipecat configuration."""
+        try:
+            # Verify API key is available
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY environment variable is required")
+            
+            # Google Speech-to-Text service for German
+            self.stt = GoogleSTTService(
+                api_key=api_key
+                # Let pipecat handle language detection or set via params
+            )
+            
+            # Google Text-to-Speech service for German
+            self.tts = GoogleTTSService(
+                api_key=api_key,
+                voice_id=self.tts_voice
+                # Language will be inferred from voice_id
+            )
+            
+            # Google LLM (Gemini 1.5 Flash) service with system prompt
+            self.llm = GoogleLLMService(
+                api_key=api_key,
+                model="gemini-1.5-flash"
+            )
+            
+            logger.info("Google services initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup Google services: {e}")
+            raise
     
     def _setup_pipeline(self):
-        """Setup the processing pipeline."""
-        # Build the system prompt for the child's age
-        system_prompt = self._build_system_prompt(self.child_age)
-        
-        # Create LLM response aggregators for context management
-        self.llm_user_aggregator = LLMUserResponseAggregator()
-        self.llm_assistant_aggregator = LLMAssistantResponseAggregator()
-        
-        # Create PII scrubbing processor
-        self.pii_scrubber = PIIScrubbingProcessor()
-        
-        # Create the pipeline with all components
-        self.pipeline = Pipeline([
-            self.transport.input(),           # Audio input from transport
-            self.stt,                        # Speech-to-Text
-            self.pii_scrubber,               # PII scrubbing
-            self.llm_user_aggregator,        # User response aggregation
-            self.llm,                        # LLM processing
-            self.tts,                        # Text-to-Speech
-            self.transport.output(),         # Audio output to transport
-            self.llm_assistant_aggregator,   # Assistant response aggregation
-        ])
-        
-        # Initialize with system prompt
-        # Store the system prompt for use in task creation
-        self.system_prompt = system_prompt
+        """Setup the processing pipeline with minimal pipecat standard components."""
+        try:
+            # Build the age-appropriate system prompt
+            system_prompt = self._build_system_prompt(self.child_age)
+            
+            # Create LLM context for system prompt initialization
+            from pipecat.processors.aggregators.llm_response import OpenAILLMContext
+            
+            # Initialize context with system message
+            initial_messages = [
+                {
+                    "role": "system", 
+                    "content": system_prompt
+                }
+            ]
+            self.context = OpenAILLMContext(messages=initial_messages)
+            
+            # Create context aggregator
+            self.context_aggregator = self.llm.create_context_aggregator(self.context)
+            
+            # Create PII scrubbing processor
+            self.pii_scrubber = PIIScrubbingProcessor()
+            
+            # Create the pipeline as simple list of processors
+            # Flow: transport.input → STT → PII Scrubbing → Context User → LLM → TTS → transport.output → Context Assistant  
+            self.pipeline = Pipeline([
+                self.transport.input(),              # Audio input from transport
+                self.stt,                           # Google Speech-to-Text
+                self.pii_scrubber,                  # PII scrubbing (our custom processor)
+                self.context_aggregator.user(),    # User context aggregation
+                self.llm,                           # Google LLM (Gemini 1.5 Flash)
+                self.tts,                           # Google Text-to-Speech
+                self.transport.output(),            # Audio output to transport
+                self.context_aggregator.assistant() # Assistant context aggregation
+            ])
+            
+            logger.info("Pipeline setup completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup pipeline: {e}")
+            raise
     
     def _build_system_prompt(self, age: int) -> str:
         """
@@ -211,35 +260,24 @@ Wichtige Regeln:
             idle_timeout_secs: Timeout in seconds for idle connections
             
         Returns:
-            Configured PipelineTask
+            Configured PipelineTask ready to run
         """
-        task = PipelineTask(
-            self.pipeline,
-            params=PipelineParams(
-                enable_metrics=True,
-                enable_usage_metrics=True,
-            ),
-            idle_timeout_secs=idle_timeout_secs,
-        )
-        
-        # Initialize LLM with system prompt
-        initial_messages = [
-            {
-                "role": "system", 
-                "content": self.system_prompt
-            }
-        ]
-        
-        # Set initial context in the aggregators
         try:
-            from pipecat.frames.frames import LLMMessagesFrame
-            messages_frame = LLMMessagesFrame(initial_messages)
-            # The aggregators will handle the initial system message
-        except ImportError:
-            # Graceful fallback if frame types are different
-            pass
+            task = PipelineTask(
+                self.pipeline,
+                params=PipelineParams(
+                    enable_metrics=True,
+                    enable_usage_metrics=True,
+                ),
+                idle_timeout_secs=idle_timeout_secs,
+            )
             
-        return task
+            logger.info(f"PipelineTask created with {idle_timeout_secs}s timeout")
+            return task
+            
+        except Exception as e:
+            logger.error(f"Failed to create PipelineTask: {e}")
+            raise
 
 
 def scrub_pii(text: str) -> str:
