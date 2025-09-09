@@ -1,16 +1,9 @@
-
 """
 Checky multimodal assistant pipeline implementation.
 
-Minimal, standards-compliant pipecat pipeline following official examples.
-Uses built-in pipecat components for maximum stability and compatibility.
+Contains ALL speech processing logic using standard pipecat components.
+Follows pipecat standards exactly - minimal custom code, maximum stability.
 """
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
 
 import os
 import re
@@ -22,27 +15,17 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-try:
-    from pipecat.pipeline.pipeline import Pipeline
-    from pipecat.pipeline.task import PipelineTask, PipelineParams
-    from pipecat.pipeline.runner import PipelineRunner
-    from pipecat.services.google.stt import GoogleSTTService
-    from pipecat.services.google.tts import GoogleTTSService
-    from pipecat.services.google.llm import GoogleLLMService
-    from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
-    from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
-    from pipecat.audio.vad.silero import SileroVADAnalyzer
-    from pipecat.frames.frames import TextFrame, LLMRunFrame
-    from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-    PIPECAT_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Pipecat not available: {e}")
-    PIPECAT_AVAILABLE = False
-    
-    # Placeholder classes for graceful degradation
-    class Pipeline: pass
-    class FrameProcessor: pass
-    class FrameDirection: pass
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.task import PipelineTask, PipelineParams
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.services.google.stt import GoogleSTTService
+from pipecat.services.google.tts import GoogleTTSService
+from pipecat.services.google.llm import GoogleLLMService
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import TextFrame, LLMRunFrame
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
 from . import db
 
@@ -60,96 +43,115 @@ class PIIScrubbingProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-async def create_checky_bot(websocket):
+class CheckyPipeline:
     """
-    Create Checky bot following standard pipecat patterns.
+    Core CheckyPipeline class containing ALL speech processing logic.
     
-    Based on the official pipecat examples with minimal customization.
-    This function follows the exact pattern from examples/foundational/07-interruptible.py
+    Follows pipecat standards exactly:
+    - Loads configuration from database during initialization
+    - Creates age-appropriate system prompt
+    - Uses only standard pipecat components in linear pipeline
+    - Handles WebSocket lifecycle properly
     """
-    if not PIPECAT_AVAILABLE:
-        raise ImportError("Pipecat is required for voice chat functionality")
+    
+    def __init__(self, websocket):
+        """Initialize CheckyPipeline with WebSocket connection."""
+        self.websocket = websocket
+        self.config = None
+        self.pipeline = None
+        self.task = None
+        self.runner = None
         
-    logger.info("Starting Checky bot initialization")
-    
-    # Load configuration from database
-    config = db.get_config()
-    if not config:
-        raise ValueError("Please complete onboarding first")
-    
-    child_age = config.get('child_age', 7)
-    tts_voice = config.get('tts_voice', 'de-DE-Standard-C')
-    
-    # Verify API key
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is required")
-    
-    # Create transport exactly like pipecat examples
-    transport_params = FastAPIWebsocketParams(
-        audio_in_enabled=True,
-        audio_out_enabled=True,
-        add_wav_header=True,
-        vad_enabled=True,
-        vad_analyzer=SileroVADAnalyzer(),
-    )
-    transport = FastAPIWebsocketTransport(websocket, transport_params)
-    
-    # Initialize services like in pipecat examples
-    stt = GoogleSTTService(api_key=api_key)
-    tts = GoogleTTSService(api_key=api_key, voice_id=tts_voice)
-    llm = GoogleLLMService(api_key=api_key, model="gemini-1.5-flash")
-    
-    # Build age-appropriate system prompt
-    system_prompt = build_system_prompt(child_age)
-    
-    # Create context exactly like pipecat examples
-    messages = [{"role": "system", "content": system_prompt}]
-    context = OpenAILLMContext(messages)
-    context_aggregator = llm.create_context_aggregator(context)
-    
-    # Create PII scrubbing processor
-    pii_scrubber = PIIScrubbingProcessor()
-    
-    # Create pipeline exactly like pipecat examples
-    pipeline = Pipeline([
-        transport.input(),
-        stt,
-        pii_scrubber,
-        context_aggregator.user(),
-        llm,
-        tts,
-        transport.output(),
-        context_aggregator.assistant(),
-    ])
-    
-    # Create task exactly like pipecat examples
-    task = PipelineTask(
-        pipeline,
-        params=PipelineParams(
-            enable_metrics=True,
-            enable_usage_metrics=True,
-        ),
-        idle_timeout_secs=300,
-    )
-    
-    # Add event handler for client connection (from pipecat examples)
-    @transport.event_handler("on_client_connected")
-    async def on_client_connected(transport, client):
-        logger.info("Client connected to Checky")
-        messages.append({"role": "system", "content": "Begrüße das Kind freundlich auf Deutsch."})
-        await task.queue_frames([LLMRunFrame()])
-    
-    # Run pipeline exactly like pipecat examples
-    runner = PipelineRunner()
-    await runner.run(task)
-
-
-def build_system_prompt(age: int) -> str:
-    """
-    Build age-appropriate German system prompt for Checky.
-    """
-    base_prompt = f"""Du bist Checky, ein freundlicher Assistent für ein {age}-jähriges Kind.
+    async def run(self):
+        """
+        Run the pipeline following standard pipecat patterns.
+        Based exactly on pipecat examples/foundational/07-interruptible.py
+        """
+        logger.info("Starting CheckyPipeline")
+        
+        # 1. Load configuration from database
+        self.config = db.get_config()
+        if not self.config:
+            raise ValueError("Please complete onboarding first")
+        
+        child_age = self.config.get('child_age', 7)
+        tts_voice = self.config.get('tts_voice', 'de-DE-Standard-C')
+        
+        # 2. Verify API key
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable is required")
+        
+        # 3. Create transport exactly like pipecat examples
+        transport_params = FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=True,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+        )
+        transport = FastAPIWebsocketTransport(self.websocket, transport_params)
+        
+        # 4. Initialize services like in pipecat examples
+        stt = GoogleSTTService(api_key=api_key, language="de-DE")
+        tts = GoogleTTSService(api_key=api_key, voice_id=tts_voice)
+        llm = GoogleLLMService(api_key=api_key, model="gemini-1.5-flash")
+        
+        # 5. Build age-appropriate system prompt
+        system_prompt = self._build_system_prompt(child_age)
+        
+        # 6. Create context exactly like pipecat examples
+        messages = [{"role": "system", "content": system_prompt}]
+        context = OpenAILLMContext(messages)
+        context_aggregator = llm.create_context_aggregator(context)
+        
+        # 7. Create PII scrubbing processor
+        pii_scrubber = PIIScrubbingProcessor()
+        
+        # 8. Create pipeline exactly like pipecat examples - linear list
+        self.pipeline = Pipeline([
+            transport.input(),
+            stt,
+            pii_scrubber,
+            context_aggregator.user(),
+            llm,
+            tts,
+            transport.output(),
+            context_aggregator.assistant(),
+        ])
+        
+        # 9. Create task exactly like pipecat examples
+        self.task = PipelineTask(
+            self.pipeline,
+            params=PipelineParams(
+                enable_metrics=True,
+                enable_usage_metrics=True,
+            ),
+            idle_timeout_secs=300,
+        )
+        
+        # 10. Add event handlers following pipecat patterns
+        @transport.event_handler("on_client_connected")
+        async def on_client_connected(transport, client):
+            logger.info("Client connected to Checky")
+            messages.append({
+                "role": "system", 
+                "content": "Begrüße das Kind freundlich auf Deutsch."
+            })
+            await self.task.queue_frames([LLMRunFrame()])
+        
+        @transport.event_handler("on_client_disconnected")
+        async def on_client_disconnected(transport, client):
+            logger.info("Client disconnected from Checky")
+            await self.task.cancel()
+        
+        # 11. Run pipeline exactly like pipecat examples
+        self.runner = PipelineRunner()
+        await self.runner.run(self.task)
+        
+    def _build_system_prompt(self, age: int) -> str:
+        """Build age-appropriate German system prompt for Checky."""
+        base_prompt = f"""Du bist Checky, ein freundlicher Assistent für ein {age}-jähriges Kind.
 
 Regeln:
 - Sprich immer auf Deutsch
@@ -159,21 +161,19 @@ Regeln:
 - Halte die Unterhaltung kinderfreundlich
 - Keine persönlichen Informationen über das Kind verwenden
 """
-    
-    if age <= 6:
-        base_prompt += "- Verwende sehr einfache Sprache und kurze Sätze"
-    elif age <= 8:
-        base_prompt += "- Erkläre Konzepte mit einfachen Beispielen"
-    else:
-        base_prompt += "- Fördere selbstständiges Denken mit altersgerechter Sprache"
-    
-    return base_prompt
+        
+        if age <= 6:
+            base_prompt += "- Verwende sehr einfache Sprache und kurze Sätze"
+        elif age <= 8:
+            base_prompt += "- Erkläre Konzepte mit einfachen Beispielen"
+        else:
+            base_prompt += "- Fördere selbstständiges Denken mit altersgerechter Sprache"
+        
+        return base_prompt
 
 
 def scrub_pii(text: str) -> str:
-    """
-    Minimal PII scrubbing for child safety.
-    """
+    """Minimal PII scrubbing for child safety."""
     if not text:
         return text
     
@@ -182,24 +182,10 @@ def scrub_pii(text: str) -> str:
     # Remove email addresses
     scrubbed = re.sub(r'\b[\w.-]+@[\w.-]+\.\w+\b', '[E-MAIL ENTFERNT]', scrubbed)
     
-    # Remove phone numbers
+    # Remove phone numbers  
     scrubbed = re.sub(r'\b\d{3,4}[\s\-/]?\d{3,8}\b', '[TELEFON ENTFERNT]', scrubbed)
     
     # Remove URLs
     scrubbed = re.sub(r'https?://\S+', '[URL ENTFERNT]', scrubbed)
     
     return scrubbed
-
-
-# Legacy compatibility class for existing code
-class CheckyPipeline:
-    """Legacy compatibility wrapper - use create_checky_bot instead."""
-    
-    def __init__(self, websocket, user_id: Optional[str] = None):
-        self.websocket = websocket
-        self.user_id = user_id
-    
-    async def run(self):
-        """Run pipeline using new standardized approach."""
-        await create_checky_bot(self.websocket)
-
