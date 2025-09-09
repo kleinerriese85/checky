@@ -450,44 +450,15 @@ async def websocket_chat(websocket: WebSocket):
     """
     Minimalist WebSocket endpoint for real-time voice chat with Checky.
     
-    Accepts connection and passes control directly to pipecat's transport layer.
+    Accepts connection and immediately delegates to CheckyPipeline.
     """
     try:
         # Accept WebSocket connection
         await websocket.accept()
         logger.info("WebSocket client connected")
         
-        # Check if pipecat is available
-        if not PIPECAT_AVAILABLE:
-            await websocket.send_text('{"error": "Voice chat not available - missing pipecat"}')
-            await websocket.close(code=1011)
-            return
-            
-        # Verify user configuration exists  
-        config = db.get_config()
-        if not config:
-            await websocket.send_text('{"error": "Please complete onboarding first"}')
-            await websocket.close(code=1008)
-            return
-        
-        # Create transport with minimal configuration
-        transport_params = FastAPIWebsocketParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            add_wav_header=True,
-            vad_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
-        )
-        
-        transport = FastAPIWebsocketTransport(websocket, transport_params)
-        
-        # Create pipeline and task
-        pipeline = CheckyPipeline(transport=transport)
-        task = pipeline.create_task(idle_timeout_secs=300)
-        
-        # Let pipecat handle everything - minimal custom logic
-        runner = PipelineRunner()
-        await runner.run(task)
+        # Immediately pass control to pipeline
+        await CheckyPipeline(websocket).run()
         
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")

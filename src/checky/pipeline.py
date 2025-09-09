@@ -70,21 +70,35 @@ class PIIScrubbingProcessor(FrameProcessor):
         try:
             # Only process text frames in downstream direction
             if isinstance(frame, TextFrame) and direction == FrameDirection.DOWNSTREAM:
+                # Safely get text content with defensive programming
+                text_content = getattr(frame, 'text', None)
+                if text_content is None:
+                    logger.warning("TextFrame missing 'text' attribute, passing through unchanged")
+                    await self.push_frame(frame, direction)
+                    return
+                
                 # Apply PII scrubbing to text content
-                scrubbed_text = scrub_pii(frame.text)
+                scrubbed_text = scrub_pii(text_content)
                 
                 # Create new frame with scrubbed content
                 scrubbed_frame = TextFrame(text=scrubbed_text)
                 
-                # Preserve metadata if present
-                if hasattr(frame, 'metadata'):
-                    scrubbed_frame.metadata = frame.metadata.copy()
+                # Safely preserve metadata if present
+                if hasattr(frame, 'metadata') and frame.metadata is not None:
+                    try:
+                        scrubbed_frame.metadata = frame.metadata.copy()
+                    except (AttributeError, TypeError) as meta_error:
+                        logger.warning(f"Could not copy frame metadata: {meta_error}")
                 
                 await self.push_frame(scrubbed_frame, direction)
             else:
                 # Pass through all other frames unchanged (SystemFrames, StartFrames, etc.)
                 await self.push_frame(frame, direction)
                 
+        except KeyError as key_error:
+            # Handle specific KeyError exceptions
+            logger.error(f"KeyError in PIIScrubbingProcessor accessing frame data: {key_error}")
+            await self.push_frame(frame, direction)  # Pass through original frame
         except Exception as e:
             # Proper error handling - don't crash the pipeline
             logger.error(f"Error in PIIScrubbingProcessor: {e}")
@@ -93,6 +107,8 @@ class PIIScrubbingProcessor(FrameProcessor):
                 await self.push_error(ErrorFrame(str(e)))
             except Exception as error_handling_error:
                 logger.critical(f"Failed to handle PII scrubbing error: {error_handling_error}")
+                # As last resort, pass through the original frame
+                await self.push_frame(frame, direction)
 
 
 class CheckyPipeline:
@@ -103,39 +119,87 @@ class CheckyPipeline:
     text-to-speech, and language understanding with age-appropriate German responses.
     """
     
-    def __init__(self, transport: BaseTransport, user_id: Optional[str] = None):
+    def __init__(self, websocket, user_id: Optional[str] = None):
         """
         Initialize the CheckyPipeline.
         
         Args:
-            transport: The transport layer for audio I/O
+            websocket: The WebSocket connection for audio I/O
             user_id: Optional user ID for configuration loading
         """
         if not PIPECAT_AVAILABLE:
             raise ImportError("Pipecat is required for CheckyPipeline functionality")
             
-        self.transport = transport
+        self.websocket = websocket
         self.user_id = user_id
+        self.transport = None
+        self.pipeline = None
+        self.task = None
         
-        # Load configuration from database
+        # Load configuration from database (moved from websocket handler)
         self._load_config()
         
-        # Setup services and pipeline
+        # Validate configuration and setup services
+        self._validate_config()
         self._setup_services()
+        self._setup_transport()
         self._setup_pipeline()
     
     def _load_config(self):
         """Load user configuration from database."""
-        config = db.get_config()
-        if config:
-            self.child_age = config.get('child_age', 7)
-            self.tts_voice = config.get('tts_voice', 'de-DE-Standard-A')
+        self.config = db.get_config()
+        if self.config:
+            self.child_age = self.config.get('child_age', 7)
+            self.tts_voice = self.config.get('tts_voice', 'de-DE-Standard-A')
             logger.info(f"Loaded config: age={self.child_age}, voice={self.tts_voice}")
         else:
             # Default configuration
+            self.config = None
             self.child_age = 7
             self.tts_voice = 'de-DE-Standard-A'
             logger.warning("No user configuration found, using defaults")
+    
+    def _validate_config(self):
+        """Validate that required configuration is available."""
+        if not self.config:
+            raise ValueError("Please complete onboarding first")
+            
+        # Validate pipecat availability (moved from websocket handler)
+        if not PIPECAT_AVAILABLE:
+            raise ImportError("Voice chat not available - missing pipecat")
+            
+        # Validate required config keys with defaults
+        self.child_age = self.config.get('child_age')
+        if self.child_age is None:
+            logger.warning("Missing child_age in config, using default of 7")
+            self.child_age = 7
+            
+        self.tts_voice = self.config.get('tts_voice')
+        if self.tts_voice is None:
+            logger.warning("Missing tts_voice in config, using default")
+            self.tts_voice = 'de-DE-Standard-A'
+    
+    def _setup_transport(self):
+        """Setup the WebSocket transport with pipecat configuration."""
+        try:
+            from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
+            from pipecat.audio.vad.silero import SileroVADAnalyzer
+            
+            # Create transport with configuration from original websocket handler
+            transport_params = FastAPIWebsocketParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                add_wav_header=True,
+                vad_enabled=True,
+                vad_analyzer=SileroVADAnalyzer(),
+            )
+            
+            self.transport = FastAPIWebsocketTransport(self.websocket, transport_params)
+            logger.info("WebSocket transport configured successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup transport: {e}")
+            raise
     
     def _setup_services(self):
         """Setup Google STT, TTS, and LLM services with proper pipecat configuration."""
@@ -263,7 +327,7 @@ Wichtige Regeln:
             Configured PipelineTask ready to run
         """
         try:
-            task = PipelineTask(
+            self.task = PipelineTask(
                 self.pipeline,
                 params=PipelineParams(
                     enable_metrics=True,
@@ -273,10 +337,69 @@ Wichtige Regeln:
             )
             
             logger.info(f"PipelineTask created with {idle_timeout_secs}s timeout")
-            return task
+            return self.task
             
         except Exception as e:
             logger.error(f"Failed to create PipelineTask: {e}")
+            raise
+    
+    async def run(self):
+        """
+        Run the complete message processing pipeline.
+        
+        This method handles the complete message processing lifecycle:
+        1) Creates the pipeline task if not already created
+        2) Runs the pipeline using PipelineRunner
+        3) Handles WebSocket disconnections and errors gracefully
+        """
+        try:
+            # Create task if not already created
+            if not self.task:
+                self.create_task(idle_timeout_secs=300)
+            
+            # Run the pipeline using pipecat's PipelineRunner
+            from pipecat.pipeline.runner import PipelineRunner
+            runner = PipelineRunner()
+            
+            logger.info("Starting pipeline execution")
+            await runner.run(self.task)
+            logger.info("Pipeline execution completed")
+            
+        except ValueError as ve:
+            # Handle configuration errors (like missing onboarding)
+            logger.error(f"Configuration error: {ve}")
+            try:
+                await self.websocket.send_text(f'{{"error": "{str(ve)}"}}')
+                await self.websocket.close(code=1008)  # Policy violation
+            except:
+                pass
+            raise
+        except ImportError as ie:
+            # Handle missing dependencies
+            logger.error(f"Dependency error: {ie}")
+            try:
+                await self.websocket.send_text(f'{{"error": "{str(ie)}"}}')
+                await self.websocket.close(code=1011)  # Internal error
+            except:
+                pass
+            raise
+        except KeyError as ke:
+            # Handle KeyError exceptions specifically
+            logger.error(f"KeyError in pipeline execution: {ke}")
+            try:
+                await self.websocket.send_text('{"error": "Configuration or data access error - please try again"}')
+                await self.websocket.close(code=1011)
+            except:
+                pass
+            raise
+        except Exception as e:
+            logger.error(f"Pipeline execution failed: {e}")
+            # Send generic error message to WebSocket if possible
+            try:
+                await self.websocket.send_text(f'{{"error": "Pipeline error: {str(e)}"}}')
+                await self.websocket.close(code=1011)
+            except:
+                pass
             raise
 
 
