@@ -2,25 +2,21 @@
 """
 FastAPI web application for Checky multimodal assistant.
 
-Provides REST API endpoints for onboarding and parent settings management,
-plus WebSocket endpoint for real-time audio chat with the CheckyPipeline.
+Minimal FastAPI app that only handles REST endpoints and WebSocket connections.
+All business logic is delegated to the pipeline module.
 """
 
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    # dotenv not available, continue without loading .env file
     pass
 
-import asyncio
-import logging
 import os
-from typing import Dict, Any, Optional, List
 import time
 from contextlib import asynccontextmanager
+from typing import Dict, Any, Optional, List
 
-# Initialize logger first
 try:
     from loguru import logger
 except ImportError:
@@ -28,55 +24,17 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Depends, Security
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
     from fastapi.staticfiles import StaticFiles
-    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+    from pydantic import BaseModel, Field, validator
     FASTAPI_AVAILABLE = True
 except ImportError:
-    logger.warning("FastAPI not available")
+    logger.error("FastAPI and Pydantic are required")
     FASTAPI_AVAILABLE = False
-    
-    # Create minimal app placeholder
-    class _StateObject:
-        def __setattr__(self, name, value): pass
-        def __getattr__(self, name): return None
-    
-    class FastAPI: 
-        def __init__(self, *args, **kwargs): 
-            self.state = _StateObject()
-        def get(self, *args, **kwargs): return lambda f: f
-        def post(self, *args, **kwargs): return lambda f: f  
-        def put(self, *args, **kwargs): return lambda f: f
-        def websocket(self, *args, **kwargs): return lambda f: f
-        def middleware(self, *args, **kwargs): return lambda f: f
-        def add_middleware(self, *args, **kwargs): pass
-        def add_exception_handler(self, *args, **kwargs): pass
-        def exception_handler(self, *args, **kwargs): return lambda f: f
-        def mount(self, *args, **kwargs): pass
-    
-    class WebSocket: pass
-    class WebSocketDisconnect(Exception): pass
-    class HTTPException(Exception): pass
-    class Request: pass
-    def Depends(*args, **kwargs): return lambda f: f
-    def Security(*args, **kwargs): return lambda f: f
-    class CORSMiddleware: pass
-    class JSONResponse: pass
-    class StaticFiles: pass
-    class HTTPBearer: pass
-    class HTTPAuthorizationCredentials: pass
-try:
-    from pydantic import BaseModel, Field, validator
-except ImportError:
-    logger.warning("Pydantic not available")
-    
-    class BaseModel: pass
-    class Field: 
-        def __init__(self, *args, **kwargs): pass
-    def validator(*args, **kwargs): return lambda f: f
-# Logger already initialized above
+    raise ImportError("FastAPI and Pydantic are required for the web application")
+
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
     from slowapi.util import get_remote_address
@@ -95,79 +53,16 @@ except ImportError:
     class RateLimitExceeded(Exception): pass
     class SlowAPIMiddleware: pass
 
-try:
-    from pipecat.pipeline.runner import PipelineRunner
-    from pipecat.runner.types import RunnerArguments
-    from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
-    from pipecat.audio.vad.silero import SileroVADAnalyzer
-    PIPECAT_AVAILABLE = True
-except ImportError:
-    logger.warning("Pipecat imports not available for web_app")
-    PIPECAT_AVAILABLE = False
-    
-    class PipelineRunner: pass
-    class RunnerArguments: pass
-    class FastAPIWebsocketTransport: pass
-    class FastAPIWebsocketParams: pass
-    class SileroVADAnalyzer: pass
-
 from . import db
-from .pipeline import CheckyPipeline
+from .pipeline import create_checky_bot
 
-# Security scheme
-security = HTTPBearer()
-
-# Configuration from environment variables
-API_KEY = os.getenv('API_KEY')
+# Configuration
 DEBUG_MODE = os.getenv('DEBUG', 'false').lower() == 'true'
 HOST = os.getenv('HOST', '0.0.0.0')
 PORT = int(os.getenv('PORT', '8000'))
 
-
-# Rate limiter configuration
+# Rate limiter
 limiter = Limiter(key_func=get_remote_address)
-
-
-# Request/Response models
-class CheckRequest(BaseModel):
-    """Request model for check endpoints."""
-    data: Dict[str, Any]
-    rules: Optional[List[str]] = None
-
-
-class CheckResponse(BaseModel):
-    """Response model for check endpoints."""
-    status: str
-    message: str
-    details: Optional[Dict[str, Any]] = None
-
-
-def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security)) -> str:
-    """
-    Verify the API key from the Authorization header.
-    
-    Args:
-        credentials: HTTP authorization credentials
-        
-    Returns:
-        The verified API key
-        
-    Raises:
-        HTTPException: If API key is invalid
-    """
-    if not API_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="Server configuration error: API key not configured"
-        )
-    
-    if credentials.credentials != API_KEY:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key"
-        )
-    
-    return credentials.credentials
 
 
 @asynccontextmanager
@@ -178,131 +73,103 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Checky application")
 
 
-# Create FastAPI app
+# Create minimal FastAPI app
 app = FastAPI(
-    title="Checky Multimodal Assistant",
-    description="Child-friendly voice assistant with German language support",
+    title="Checky Assistant",
+    description="Child-friendly voice assistant",
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# Add rate limiting middleware
+# Add middleware
 app.state.limiter = limiter
 if SLOWAPI_AVAILABLE:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_middleware(SlowAPIMiddleware)
 
-# Add CORS middleware
-if FASTAPI_AVAILABLE:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # In production, specify actual domains
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-# Request/Response logging middleware
+# Request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log request received and response sent."""
+    """Log requests for monitoring."""
     start_time = time.time()
-    
-    logger.info(f"request_received: {request.method} {request.url}")
-    
+    logger.info(f"{request.method} {request.url}")
     response = await call_next(request)
-    
     process_time = time.time() - start_time
-    logger.info(f"response_sent: {response.status_code} - {process_time:.4f}s")
-    
+    logger.info(f"Response: {response.status_code} ({process_time:.3f}s)")
     return response
 
 
-# Pydantic models for API requests/responses
+# Pydantic models
 class OnboardRequest(BaseModel):
-    """Request model for user onboarding."""
-    age: int = Field(..., ge=5, le=10, description="Child's age (5-10)")
-    pin: str = Field(..., min_length=4, max_length=4, description="4-digit PIN")
-    tts_voice: str = Field(default="de-DE-Standard-A", description="TTS voice ID")
+    age: int = Field(..., ge=5, le=10)
+    pin: str = Field(..., min_length=4, max_length=4)
+    tts_voice: str = Field(default="de-DE-Standard-A")
     
     @validator('pin')
     def validate_pin(cls, v):
         if not v.isdigit():
-            raise ValueError('PIN must contain only digits')
+            raise ValueError('PIN must be 4 digits')
         return v
 
 
 class LoginRequest(BaseModel):
-    """Request model for parent login."""
-    pin: str = Field(..., min_length=4, max_length=4, description="4-digit PIN")
+    pin: str = Field(..., min_length=4, max_length=4)
     
     @validator('pin')
     def validate_pin(cls, v):
         if not v.isdigit():
-            raise ValueError('PIN must contain only digits')
+            raise ValueError('PIN must be 4 digits')
         return v
 
 
 class UpdateSettingsRequest(BaseModel):
-    """Request model for updating settings."""
-    pin: str = Field(..., min_length=4, max_length=4, description="4-digit PIN for authentication")
-    age: Optional[int] = Field(None, ge=5, le=10, description="New child's age (5-10)")
-    tts_voice: Optional[str] = Field(None, description="New TTS voice ID")
+    pin: str = Field(..., min_length=4, max_length=4)
+    age: Optional[int] = Field(None, ge=5, le=10)
+    tts_voice: Optional[str] = None
     
     @validator('pin')
     def validate_pin(cls, v):
         if not v.isdigit():
-            raise ValueError('PIN must contain only digits')
+            raise ValueError('PIN must be 4 digits')
         return v
 
 
 class SuccessResponse(BaseModel):
-    """Standard success response."""
     success: bool = True
     message: str
 
 
-class ErrorResponse(BaseModel):
-    """Standard error response."""
-    success: bool = False
-    error: str
-
-
-# API Endpoints
-
+# REST API endpoints
 @app.get("/")
 async def root():
-    """Root endpoint returning basic API information."""
+    """Root endpoint."""
     return {
         "name": "Checky API",
         "version": "1.0.0",
-        "status": "running",
-        "debug": DEBUG_MODE,
-        "api_key_configured": bool(API_KEY)
+        "status": "running"
     }
 
 
 @app.post("/onboard", response_model=SuccessResponse)
 @limiter.limit("10/minute")
 async def onboard_user(request: Request, data: OnboardRequest):
-    """
-    Onboard a new user with child's age and parent PIN.
-    
-    Creates initial configuration in the database.
-    """
+    """Onboard new user."""
     try:
         success = db.create_user(data.age, data.pin, data.tts_voice)
-        
         if not success:
-            raise HTTPException(
-                status_code=400,
-                detail="Failed to create user. User may already exist."
-            )
+            raise HTTPException(status_code=400, detail="User already exists")
         
-        logger.info(f"User onboarded successfully with age {data.age}")
+        logger.info(f"User onboarded: age={data.age}")
         return SuccessResponse(message="User onboarded successfully")
-    
     except Exception as e:
         logger.error(f"Onboarding failed: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -311,18 +178,11 @@ async def onboard_user(request: Request, data: OnboardRequest):
 @app.post("/parent/login", response_model=SuccessResponse)
 @limiter.limit("10/minute")
 async def parent_login(request: Request, data: LoginRequest):
-    """
-    Authenticate parent with PIN.
-    
-    Returns success if PIN is correct.
-    """
+    """Parent authentication."""
     try:
         if not db.authenticate_pin(data.pin):
             raise HTTPException(status_code=401, detail="Invalid PIN")
-        
-        logger.info("Parent authentication successful")
         return SuccessResponse(message="Authentication successful")
-    
     except HTTPException:
         raise
     except Exception as e:
@@ -333,25 +193,16 @@ async def parent_login(request: Request, data: LoginRequest):
 @app.put("/parent/settings", response_model=SuccessResponse)
 @limiter.limit("10/minute")
 async def update_settings(request: Request, data: UpdateSettingsRequest):
-    """
-    Update user settings with PIN authentication.
-    
-    Allows updating child's age and/or TTS voice preference.
-    """
+    """Update user settings."""
     try:
-        # Authenticate PIN first
         if not db.authenticate_pin(data.pin):
             raise HTTPException(status_code=401, detail="Invalid PIN")
         
-        # Update settings
         success = db.update_config(age=data.age, tts_voice=data.tts_voice)
-        
         if not success:
             raise HTTPException(status_code=400, detail="Failed to update settings")
         
-        logger.info("Settings updated successfully")
-        return SuccessResponse(message="Settings updated successfully")
-    
+        return SuccessResponse(message="Settings updated")
     except HTTPException:
         raise
     except Exception as e:
@@ -361,16 +212,12 @@ async def update_settings(request: Request, data: UpdateSettingsRequest):
 
 @app.get("/config")
 async def get_config():
-    """Get current configuration (without PIN)."""
+    """Get configuration (without sensitive data)."""
     try:
         config = db.get_config()
         if not config:
             raise HTTPException(status_code=404, detail="No configuration found")
-        
-        # Remove sensitive data
-        safe_config = {k: v for k, v in config.items() if k != 'pin_hash'}
-        return safe_config
-    
+        return {k: v for k, v in config.items() if k != 'pin_hash'}
     except HTTPException:
         raise
     except Exception as e:
@@ -380,85 +227,20 @@ async def get_config():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "api_key_present": bool(API_KEY),
-        "debug_mode": DEBUG_MODE
-    }
+    """Health check."""
+    return {"status": "healthy"}
 
 
-@app.post("/v1/check", response_model=CheckResponse)
-async def check_data(
-    request: CheckRequest,
-    api_key: str = Depends(verify_api_key)
-) -> CheckResponse:
-    """
-    Main endpoint for data validation checks.
-    
-    Args:
-        request: The check request containing data and optional rules
-        api_key: Verified API key from authorization header
-        
-    Returns:
-        Check response with validation results
-    """
-    logger.info(f"Processing check request with {len(request.data)} data fields")
-    
-    try:
-        # Simulate some basic validation
-        if not request.data:
-            return CheckResponse(
-                status="fail",
-                message="No data provided for validation"
-            )
-        
-        # Check for required fields (example)
-        required_fields = ["id", "name"]  # Example required fields
-        missing_fields = [field for field in required_fields if field not in request.data]
-        
-        if missing_fields:
-            return CheckResponse(
-                status="fail",
-                message=f"Missing required fields: {', '.join(missing_fields)}",
-                details={"missing_fields": missing_fields}
-            )
-        
-        # If all checks pass
-        logger.info("Validation checks passed")
-        return CheckResponse(
-            status="pass",
-            message="All validation checks passed",
-            details={
-                "validated_fields": list(request.data.keys()),
-                "rules_applied": request.rules or ["default"],
-                "api_key_used": api_key[:8] + "..." if api_key else None
-            }
-        )
-        
-    except Exception as e:
-        logger.error(f"Check processing failed: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
-# Minimalist WebSocket endpoint for voice chat
+# WebSocket endpoint for voice chat
 @app.websocket("/chat")
 async def websocket_chat(websocket: WebSocket):
-    """
-    Minimalist WebSocket endpoint for real-time voice chat with Checky.
-    
-    Accepts connection and immediately delegates to CheckyPipeline.
-    """
+    """Minimal WebSocket endpoint that delegates to pipeline."""
     try:
-        # Accept WebSocket connection
         await websocket.accept()
         logger.info("WebSocket client connected")
         
-        # Immediately pass control to pipeline
-        await CheckyPipeline(websocket).run()
+        # Delegate all processing to pipeline
+        await create_checky_bot(websocket)
         
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
@@ -469,36 +251,27 @@ async def websocket_chat(websocket: WebSocket):
         except:
             pass
 
-
-
-
-# Mount static files for frontend (if public directory exists)
-if FASTAPI_AVAILABLE and os.path.exists("public"):
+# Mount static files if available
+if os.path.exists("public"):
     app.mount("/", StaticFiles(directory="public", html=True), name="static")
 
 
-# Error handlers
+# Global error handler
 @app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """Handle unexpected exceptions."""
+async def handle_exception(request: Request, exc: Exception):
+    """Handle unexpected errors."""
     logger.error(f"Unexpected error: {exc}")
     return JSONResponse(
         status_code=500,
-        content={"success": False, "error": "Internal server error"}
+        content={"error": "Internal server error"}
     )
 
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # Configure logging  
-    logging.basicConfig(level=logging.INFO)
-    
-    # Run the application
     uvicorn.run(
         app,
         host=HOST,
         port=PORT,
-        reload=DEBUG_MODE,
-        log_level="debug" if DEBUG_MODE else "info",
+        reload=DEBUG_MODE
     )
