@@ -78,7 +78,7 @@ async def create_checky_bot(websocket):
         raise ValueError("Please complete onboarding first")
     
     child_age = config.get('child_age', 7)
-    tts_voice = config.get('tts_voice', 'de-DE-Standard-A')
+    tts_voice = config.get('tts_voice', 'de-DE-Standard-C')
     
     # Verify API key
     api_key = os.getenv("GEMINI_API_KEY")

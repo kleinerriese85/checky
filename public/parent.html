@@ -273,12 +273,8 @@
                     <div class="form-group">
                         <label for="onboard-voice">Stimme für Checky</label>
                         <select id="onboard-voice" required>
-                            <option value="de-DE-Standard-A">Standard weiblich</option>
-                            <option value="de-DE-Standard-B">Standard männlich</option>
-                            <option value="de-DE-Wavenet-A">Premium weiblich</option>
-                            <option value="de-DE-Wavenet-B">Premium männlich</option>
-                            <option value="de-DE-Wavenet-C">Premium weiblich 2</option>
-                            <option value="de-DE-Wavenet-D">Premium männlich 2</option>
+                            <option value="de-DE-Standard-C" selected>Standard weiblich</option>
+                            <option value="de-DE-Standard-D">Standard männlich</option>
                         </select>
                     </div>
                     
@@ -341,12 +337,8 @@
                         <label for="update-voice">Neue Stimme (optional)</label>
                         <select id="update-voice">
                             <option value="">Nicht ändern</option>
-                            <option value="de-DE-Standard-A">Standard weiblich</option>
-                            <option value="de-DE-Standard-B">Standard männlich</option>
-                            <option value="de-DE-Wavenet-A">Premium weiblich</option>
-                            <option value="de-DE-Wavenet-B">Premium männlich</option>
-                            <option value="de-DE-Wavenet-C">Premium weiblich 2</option>
-                            <option value="de-DE-Wavenet-D">Premium männlich 2</option>
+                            <option value="de-DE-Standard-C">Standard weiblich</option>
+                            <option value="de-DE-Standard-D">Standard männlich</option>
                         </select>
                     </div>
                     
@@ -568,12 +560,15 @@
             
             getVoiceName(voiceId) {
                 const voices = {
-                    'de-DE-Standard-A': 'Standard weiblich',
-                    'de-DE-Standard-B': 'Standard männlich',
-                    'de-DE-Wavenet-A': 'Premium weiblich',
-                    'de-DE-Wavenet-B': 'Premium männlich',
-                    'de-DE-Wavenet-C': 'Premium weiblich 2',
-                    'de-DE-Wavenet-D': 'Premium männlich 2'
+                    'de-DE-Standard-C': 'Standard weiblich',
+                    'de-DE-Standard-D': 'Standard männlich',
+                    // Legacy voice mappings for backward compatibility
+                    'de-DE-Standard-A': 'Standard weiblich (veraltet)',
+                    'de-DE-Standard-B': 'Standard männlich (veraltet)',
+                    'de-DE-Wavenet-A': 'Premium weiblich (veraltet)',
+                    'de-DE-Wavenet-B': 'Premium männlich (veraltet)',
+                    'de-DE-Wavenet-C': 'Premium weiblich 2 (veraltet)',
+                    'de-DE-Wavenet-D': 'Premium männlich 2 (veraltet)'
                 };
                 return voices[voiceId] || voiceId;
             }

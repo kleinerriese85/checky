@@ -52,7 +52,7 @@ class CheckyDatabase:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         child_age INTEGER NOT NULL CHECK (child_age >= 5 AND child_age <= 10),
                         pin_hash TEXT NOT NULL,
-                        tts_voice TEXT NOT NULL DEFAULT 'de-DE-Standard-A',
+                        tts_voice TEXT NOT NULL DEFAULT 'de-DE-Standard-C',
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
@@ -74,7 +74,7 @@ class CheckyDatabase:
             logger.error(f"Failed to initialize database: {e}")
             raise
     
-    def create_user(self, age: int, pin: str, tts_voice: str = "de-DE-Standard-A") -> bool:
+    def create_user(self, age: int, pin: str, tts_voice: str = "de-DE-Standard-C") -> bool:
         """
         Create a new user configuration.
         
@@ -278,7 +278,7 @@ def get_database(db_path: str = "checky.db") -> CheckyDatabase:
 
 
 # Convenience functions for easier usage
-def create_user(age: int, pin: str, tts_voice: str = "de-DE-Standard-A") -> bool:
+def create_user(age: int, pin: str, tts_voice: str = "de-DE-Standard-C") -> bool:
     """Create a new user configuration."""
     return get_database().create_user(age, pin, tts_voice)
 

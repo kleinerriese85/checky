@@ -112,12 +112,19 @@ async def log_requests(request: Request, call_next):
 class OnboardRequest(BaseModel):
     age: int = Field(..., ge=5, le=10)
     pin: str = Field(..., min_length=4, max_length=4)
-    tts_voice: str = Field(default="de-DE-Standard-A")
+    tts_voice: str = Field(default="de-DE-Standard-C")
     
     @validator('pin')
     def validate_pin(cls, v):
         if not v.isdigit():
             raise ValueError('PIN must be 4 digits')
+        return v
+    
+    @validator('tts_voice')
+    def validate_tts_voice(cls, v):
+        supported_voices = {'de-DE-Standard-C', 'de-DE-Standard-D'}
+        if v not in supported_voices:
+            raise ValueError(f'Voice must be one of: {", ".join(sorted(supported_voices))}')
         return v
 
 
@@ -140,6 +147,14 @@ class UpdateSettingsRequest(BaseModel):
     def validate_pin(cls, v):
         if not v.isdigit():
             raise ValueError('PIN must be 4 digits')
+        return v
+    
+    @validator('tts_voice')
+    def validate_tts_voice(cls, v):
+        if v is not None:
+            supported_voices = {'de-DE-Standard-C', 'de-DE-Standard-D'}
+            if v not in supported_voices:
+                raise ValueError(f'Voice must be one of: {", ".join(sorted(supported_voices))}')
         return v
 
 
